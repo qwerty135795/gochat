@@ -1,0 +1,57 @@
+###Create user
+POST http://localhost:5000/register
+Content-Type: application/json
+
+{
+  "Username": "astra1",
+  "password": "astra"
+}
+### Login
+POST http://localhost:5000/login
+Content-Type: application/json
+
+{
+  "username": "astra1",
+  "password": "astra"
+}
+
+> {% client.global.set("auth_token", response.body.AccessToken); %}
+
+
+### SEND Message
+POST http://localhost:5000/messages/1
+Content-Type: application/json
+Authorization: Bearer {{auth_token}}
+
+{
+  "content": "hello bro"
+}
+
+### GET LATEST
+GET http://localhost:5000/messages
+Authorization: Bearer {{auth_token}}
+
+### Send message By UserId
+POST http://localhost:5000/user/message
+Authorization: Bearer {{auth_token}}
+Content-Type: application/json
+
+{
+  "receiverId": 2,
+  "content": "hello new Chat"
+}
+
+
+### UPDATE MESSAGE
+PUT http://localhost:5000/message/2
+Content-Type: application/json
+Authorization: Bearer {{auth_token}}
+
+{
+  "content" : "Update Message"
+}
+
+### GET Chat
+GET localhost:5000/chats/1
+Content-Type: application/json
+Authorization: Bearer {{auth_token}}
