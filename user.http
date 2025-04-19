@@ -1,25 +1,32 @@
 ###Create user
-POST http://localhost:5000/register
+POST http://localhost:5000/auth/register
 Content-Type: application/json
 
 {
-  "Username": "astra1",
-  "password": "astra"
+  "Username": "astra2",
+  "password": "astra",
+  "email": ""
 }
 ### Login
-POST http://localhost:5000/login
+POST http://localhost:5000/auth/login
 Content-Type: application/json
 
 {
-  "username": "astra1",
+  "username": "astra2",
   "password": "astra"
 }
 
 > {% client.global.set("auth_token", response.body.AccessToken); %}
+### RESEND email confirmation
+POST http://localhost:5000/auth/resend_email_confirmation
+Content-Type: application/json
 
+{
+  "email": ""
+}
 
 ### SEND Message
-POST http://localhost:5000/messages/1
+POST http://localhost:5000/messages/5
 Content-Type: application/json
 Authorization: Bearer {{auth_token}}
 
@@ -37,7 +44,7 @@ Authorization: Bearer {{auth_token}}
 Content-Type: application/json
 
 {
-  "receiverId": 2,
+  "receiverId": 1,
   "content": "hello new Chat"
 }
 
@@ -52,6 +59,10 @@ Authorization: Bearer {{auth_token}}
 }
 
 ### GET Chat
-GET localhost:5000/chats/1
+GET localhost:5000/chats/3
 Content-Type: application/json
+Authorization: Bearer {{auth_token}}
+
+### DELETE message
+DELETE http://localhost:5000/message/4
 Authorization: Bearer {{auth_token}}

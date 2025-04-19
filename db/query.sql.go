@@ -45,6 +45,17 @@ func (q *Queries) CheckPrivateChatExist(ctx context.Context, arg CheckPrivateCha
 	return id, err
 }
 
+const checkUserExist = `-- name: CheckUserExist :one
+SELECT EXISTS(SELECT 1 from users where id = ?) as exist
+`
+
+func (q *Queries) CheckUserExist(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, checkUserExist, id)
+	var exist int64
+	err := row.Scan(&exist)
+	return exist, err
+}
+
 const checkUserInChat = `-- name: CheckUserInChat :one
 SELECT EXISTS(select 1 from conversation_participants where user_id = ? and conversation_id = ?) as exist
 `
@@ -59,6 +70,15 @@ func (q *Queries) CheckUserInChat(ctx context.Context, arg CheckUserInChatParams
 	var exist int64
 	err := row.Scan(&exist)
 	return exist, err
+}
+
+const confirmAccount = `-- name: ConfirmAccount :exec
+UPDATE users SET email_confirmed = 1 WHERE id = ?
+`
+
+func (q *Queries) ConfirmAccount(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, confirmAccount, id)
+	return err
 }
 
 const createConversation = `-- name: CreateConversation :one
@@ -108,21 +128,28 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id, username, password_hash, created_at
+INSERT INTO users (username,username_normalized, password_hash, email, email_normalized)
+VALUES (?1,LOWER(?1), ?2,?3, LOWER(?3)) RETURNING id, username, username_normalized, password_hash, email, email_normalized, email_confirmed, avatar_path, created_at
 `
 
 type CreateUserParams struct {
 	Username     sql.NullString
 	PasswordHash sql.NullString
+	Email        sql.NullString
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRowContext(ctx, createUser, arg.Username, arg.PasswordHash)
+	row := q.db.QueryRowContext(ctx, createUser, arg.Username, arg.PasswordHash, arg.Email)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Username,
+		&i.UsernameNormalized,
 		&i.PasswordHash,
+		&i.Email,
+		&i.EmailNormalized,
+		&i.EmailConfirmed,
+		&i.AvatarPath,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -283,7 +310,7 @@ func (q *Queries) GetMessageThread(ctx context.Context, arg GetMessageThreadPara
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, username, password_hash, created_at from users
+SELECT id, username, username_normalized, password_hash, email, email_normalized, email_confirmed, avatar_path, created_at from users
 WHERE id = ? LIMIT 1
 `
 
@@ -293,31 +320,63 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Username,
+		&i.UsernameNormalized,
 		&i.PasswordHash,
+		&i.Email,
+		&i.EmailNormalized,
+		&i.EmailConfirmed,
+		&i.AvatarPath,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, username, username_normalized, password_hash, email, email_normalized, email_confirmed, avatar_path, created_at from users
+WHERE email_normalized = LOWER(?) LIMIT 1
+`
+
+func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByEmail, lower)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.UsernameNormalized,
+		&i.PasswordHash,
+		&i.Email,
+		&i.EmailNormalized,
+		&i.EmailConfirmed,
+		&i.AvatarPath,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, password_hash, created_at from users
-WHERE username = ? LIMIT 1
+SELECT id, username, username_normalized, password_hash, email, email_normalized, email_confirmed, avatar_path, created_at from users
+WHERE username_normalized = LOWER(?) LIMIT 1
 `
 
-func (q *Queries) GetUserByUsername(ctx context.Context, username sql.NullString) (User, error) {
-	row := q.db.QueryRowContext(ctx, getUserByUsername, username)
+func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserByUsername, lower)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Username,
+		&i.UsernameNormalized,
 		&i.PasswordHash,
+		&i.Email,
+		&i.EmailNormalized,
+		&i.EmailConfirmed,
+		&i.AvatarPath,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, password_hash, created_at FROM users
+SELECT id, username, username_normalized, password_hash, email, email_normalized, email_confirmed, avatar_path, created_at FROM users
 ORDER BY username
 `
 
@@ -333,7 +392,12 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Username,
+			&i.UsernameNormalized,
 			&i.PasswordHash,
+			&i.Email,
+			&i.EmailNormalized,
+			&i.EmailConfirmed,
+			&i.AvatarPath,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -378,7 +442,7 @@ func (q *Queries) UpdateMessageText(ctx context.Context, arg UpdateMessageTextPa
 }
 
 const updateUser = `-- name: UpdateUser :exec
-UPDATE users SET username = ? WHERE id = ?
+UPDATE users SET username = ?1, username_normalized = LOWER(?1) WHERE id = ?2
 `
 
 type UpdateUserParams struct {

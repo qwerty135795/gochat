@@ -1,19 +1,21 @@
 package api
 
 import (
-	"awesomeProject/db"
+	"awesomeProject/services"
 	"awesomeProject/types"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/golang-jwt/jwt/v5"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+type ChatController struct {
+	MessageService *services.MessageService
+}
 
 func getUserIdFromJwtToken(ctx context.Context) (int64, error) {
 	token, ok := ctx.Value(types.UserContext).(*jwt.Token)
@@ -31,11 +33,7 @@ func getUserIdFromJwtToken(ctx context.Context) (int64, error) {
 	return int64(userId), nil
 }
 
-func (state *AppState) SendMessageToUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
+func (controller *ChatController) SendMessageToUser(w http.ResponseWriter, r *http.Request) {
 	data := struct {
 		ReceiverId int64
 		Content    string
@@ -52,85 +50,26 @@ func (state *AppState) SendMessageToUser(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]interface{}{"error": err})
 		return
 	}
-	res, err := state.Queries.
-		CheckPrivateChatExist(r.Context(), db.CheckPrivateChatExistParams{UserID: userId, UserID_2: data.ReceiverId})
-	if err != nil && err.Error() != "sql: no rows in result set" {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{"error": err})
-		return
-	}
-	if res != 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Chat already exists: %d", res)})
-		return
-	}
-	tx, err := state.Database.BeginTx(r.Context(), nil)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	q := db.New(tx)
-	cv, err := q.CreateConversation(r.Context(), db.CreateConversationParams{IsGroup: sql.NullInt64{0, true}})
-	if err != nil {
-		fmt.Println(err)
-		rollbackOnError(tx, w, err)
-		return
-	}
-	for _, v := range []int64{userId, data.ReceiverId} {
-		err = q.AddParticipantsToChat(r.Context(), db.AddParticipantsToChatParams{UserID: v, ConversationID: cv.ID})
-		if err != nil {
-			fmt.Println(err)
-			rollbackOnError(tx, w, err)
-			return
-		}
-	}
-	_, err = state.Queries.
-		CreateMessage(r.Context(), db.CreateMessageParams{ConversationID: cv.ID,
-			SenderID: sql.NullInt64{userId, true}, Content: data.Content})
-	if err != nil {
-		fmt.Println(err)
-		rollbackOnError(tx, w, err)
-		return
-	}
-	err = tx.Commit()
-	if err != nil {
-		internalError(w, err)
+	chatId, statusError := controller.MessageService.SendMessageToUser(r.Context(),
+		userId, data.ReceiverId, data.Content)
+	if statusError != nil {
+		http.Error(w, statusError.Error(), statusError.Status)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "success", "chatId": cv.ID})
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "success", "chatId": chatId})
 }
 
-func rollbackOnError(tsx *sql.Tx, w http.ResponseWriter, err error) {
-	if err := tsx.Rollback(); err != nil {
-		log.Fatalf("Transaction rollback failed. %v", err)
-	}
-	internalError(w, err)
-}
-func (state *AppState) DeleteMessage(w http.ResponseWriter, r *http.Request) {
+func (controller *ChatController) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	messageId, err := strconv.ParseInt(r.PathValue("messageId"), 10, 64)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	mess, err := state.Queries.GetMessageById(r.Context(), messageId)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
 	userId, err := getUserIdFromJwtToken(r.Context())
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	if !mess.SenderID.Valid || mess.SenderID.Int64 != userId {
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Only sender can remove a message"})
-		return
-	}
-	err = state.Queries.DeleteMessage(r.Context(), messageId)
-	if err != nil {
-		internalError(w, err)
+	res := controller.MessageService.DeleteMessage(r.Context(), messageId, userId)
+	if res != nil {
+		http.Error(w, res.Error(), res.Status)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -142,11 +81,7 @@ func internalError(w http.ResponseWriter, err error) {
 		return
 	}
 }
-func (state *AppState) SendMessage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
+func (controller *ChatController) SendMessage(w http.ResponseWriter, r *http.Request) {
 	chatId, err := strconv.ParseInt(r.PathValue("chatId"), 10, 64)
 	if err != nil {
 		log.Print(err)
@@ -158,49 +93,35 @@ func (state *AppState) SendMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	res, err := state.Queries.CheckUserInChat(r.Context(), db.CheckUserInChatParams{UserID: userId, ConversationID: chatId})
-	if err != nil {
-		log.Print(err)
-		w.WriteHeader(http.StatusInternalServerError)
-	}
-	if res == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "User isn't exist in chat"})
-		return
-	}
 	defer r.Body.Close()
 	data := struct {
 		Content string
 	}{}
 	json.NewDecoder(r.Body).Decode(&data)
-	message, err := state.Queries.CreateMessage(r.Context(),
-		db.CreateMessageParams{ConversationID: chatId, SenderID: sql.NullInt64{Int64: userId, Valid: true}, Content: data.Content})
-	if err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
+	res, statusErr := controller.MessageService.
+		SendMessage(r.Context(), userId, chatId, data.Content)
+	if statusErr != nil {
+		http.Error(w, statusErr.Error(), statusErr.Status)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(message)
+	json.NewEncoder(w).Encode(res)
 }
-func (state *AppState) GetLatestChats(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
+func (controller *ChatController) GetLatestChats(w http.ResponseWriter, r *http.Request) {
 	userId, err := getUserIdFromJwtToken(r.Context())
-	Messages, err := state.Queries.GetLatestChats(r.Context(), userId)
 	if err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Println(Messages)
-	json.NewEncoder(w).Encode(Messages)
+	messages, statErr := controller.MessageService.GetLatestChats(r.Context(), userId)
+	if statErr != nil {
+		http.Error(w, statErr.Error(), statErr.Status)
+		return
+	}
+	json.NewEncoder(w).Encode(messages)
 }
-func (state *AppState) UpdateMessage(w http.ResponseWriter, r *http.Request) {
+func (controller *ChatController) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "application/json")
 	data := struct {
 		Content string
@@ -223,24 +144,15 @@ func (state *AppState) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	message, err := state.Queries.GetMessageById(r.Context(), messageId)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	if message.SenderID.Int64 != userId {
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Only sender can change the message"})
-		return
-	}
-	err = state.Queries.UpdateMessageText(r.Context(), db.UpdateMessageTextParams{ID: messageId, Content: data.Content})
-	if err != nil {
-		internalError(w, err)
+	statRes := controller.MessageService.UpdateMessage(r.Context(), userId, messageId,
+		data.Content)
+	if statRes != nil {
+		http.Error(w, statRes.Error(), statRes.Status)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-func (state *AppState) GetChatMessages(w http.ResponseWriter, r *http.Request) {
+func (controller *ChatController) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "application/json")
 	chatId, err := strconv.ParseInt(r.PathValue("chatId"), 10, 64)
 	page := parseInt64WithDefault(r.URL.Query().Get("page"), 1)
@@ -255,22 +167,9 @@ func (state *AppState) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	res, err := state.Queries.
-		CheckUserInChat(r.Context(),
-			db.CheckUserInChatParams{ConversationID: chatId, UserID: userId})
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	if res == 0 {
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Forbidden action, trying get access to other people dialog"})
-		return
-	}
-	messages, err := state.Queries.GetMessageThread(r.Context(), db.GetMessageThreadParams{ConversationID: chatId, Limit: pageSize,
-		Offset: (page - 1) * pageSize})
-	if err != nil {
-		internalError(w, err)
+	messages, statErr := controller.MessageService.GetChatMessages(r.Context(), chatId, userId, pageSize, page)
+	if statErr != nil {
+		http.Error(w, statErr.Error(), statErr.Status)
 		return
 	}
 	json.NewEncoder(w).Encode(messages)

@@ -33,8 +33,13 @@ type Message struct {
 }
 
 type User struct {
-	ID           int64
-	Username     sql.NullString
-	PasswordHash sql.NullString
-	CreatedAt    time.Time
+	ID                 int64
+	Username           sql.NullString
+	UsernameNormalized sql.NullString
+	PasswordHash       sql.NullString
+	Email              sql.NullString
+	EmailNormalized    interface{}
+	EmailConfirmed     int64
+	AvatarPath         sql.NullString
+	CreatedAt          time.Time
 }

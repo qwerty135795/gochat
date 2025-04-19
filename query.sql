@@ -1,22 +1,27 @@
 -- name: GetUserByUsername :one
 SELECT * from users
-WHERE username = ? LIMIT 1;
-
+WHERE username_normalized = LOWER(?) LIMIT 1;
+-- name: GetUserByEmail :one
+SELECT * from users
+WHERE email_normalized = LOWER(?) LIMIT 1;
 -- name: GetUser :one
 SELECT * from users
 WHERE id = ? LIMIT 1;
-
-
+-- name: CheckUserExist :one
+SELECT EXISTS(SELECT 1 from users where id = ?) as exist;
 -- name: ListUsers :many
 SELECT * FROM users
 ORDER BY username;
 -- name: CreateUser :one
-INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING *;
+INSERT INTO users (username,username_normalized, password_hash, email, email_normalized)
+VALUES (?1,LOWER(?1), ?2,?3, LOWER(?3)) RETURNING *;
 -- name: UpdateUser :exec
-UPDATE users SET username = ? WHERE id = ?;
+UPDATE users SET username = ?1, username_normalized = LOWER(?1) WHERE id = ?2;
 -- name: DeleteUser :exec
 DELETE FROM users WHERE id = ?;
 
+-- name: ConfirmAccount :exec
+UPDATE users SET email_confirmed = 1 WHERE id = ?;
 -- Conversations
 -- name: CreateConversation :one
 INSERT INTO conversations (is_group, name) VALUES (?, ?) RETURNING *;

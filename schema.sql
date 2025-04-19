@@ -1,9 +1,16 @@
 CREATE TABLE IF NOT EXISTS users (
                                      id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
                                      username TEXT,
+    username_normalized TEXT UNIQUE,
                                      password_hash TEXT,
+    email TEXT,
+    email_normalized TEXT UNIQUER,
+    email_confirmed INTEGER NOT NULL CHECK (email_confirmed in (0, 1)) DEFAULT 0,
+    avatar_path TEXT,
                                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_username ON users(LOWER(username_normalized));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email ON users(LOWER(email_normalized));
 CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     is_group INTEGER CHECK (is_group in (0, 1)),

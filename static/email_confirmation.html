@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EmailConfirmation</title>
+</head>
+<body>
+  <script>
+   const urlParams = new URLSearchParams(window.location.search)
+   const token = urlParams.get("token")
+   fetch(`http://localhost:5000/auth/email_confirmation?token=${token}`,
+       {
+           method: "POST",
+           headers: {
+               "Authorization": `Bearer ${token}`
+           }
+       }).then(_ => console.log("Email confirmed"))
+       .catch(err => console.log(err))
+  </script>
+</body>
+</html>
